@@ -3,30 +3,34 @@ import json
 import re
 import sys
 from typing import Any, Optional
+import unicodedata
 import requests
 
 ANKI_URL = "http://127.0.0.1:8765"
 
 
-def anki(action: str, **params: Any) -> Optional[Any]:
+def anki(action: str, suppress_error: bool = False, **params: Any) -> Optional[Any]:
   payload = {"action": action, "version": 6, "params": params}
   try:
     response = requests.post(ANKI_URL, json=payload, timeout=5)
     response.raise_for_status()
     data = response.json()
     if data.get("error"):
-      print(f"\n⚠️  AnkiConnect error on '{action}': {data['error']}", file=sys.stderr)
+      if not suppress_error:
+        print(f"\n⚠️  AnkiConnect error on '{action}': {data['error']}", file=sys.stderr)
       return None
     return data.get("result")
   except requests.exceptions.ConnectionError:
-    print(
-        "\n❌ Could not connect to AnkiConnect at 127.0.0.1:8765."
-        "\nEnsure the Anki desktop application is open and AnkiConnect is installed.",
-        file=sys.stderr,
-    )
+    if not suppress_error:
+      print(
+          "\n❌ Could not connect to AnkiConnect at 127.0.0.1:8765."
+          "\nEnsure the Anki desktop application is open and AnkiConnect is installed.",
+          file=sys.stderr,
+      )
     return None
   except requests.exceptions.RequestException as err:
-    print(f"\n❌ Network error: {err}", file=sys.stderr)
+    if not suppress_error:
+      print(f"\n❌ Network error: {err}", file=sys.stderr)
     return None
 
 
@@ -34,6 +38,7 @@ def anki(action: str, **params: Any) -> Optional[Any]:
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
+C_DIM = "\033[2m"
 ITALIC = "\033[3m"
 UNDERLINE = "\033[4m"
 
@@ -102,34 +107,160 @@ def clean_html(raw_html: str) -> str:
   return clean.strip() + RESET
 
 
+def str_display_width(s: str) -> int:
+  # Compute visual terminal cell width (ignoring ANSI codes & handling CJK characters like 汉语)
+  visible = re.sub(r"\033\[[0-9;]*m", "", s)
+  return sum(2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1 for ch in visible)
+
+
+def pad_display(s: str, target_width: int) -> str:
+  current_width = str_display_width(s)
+  return s + " " * max(0, target_width - current_width)
+
+
+def get_deck_stats(deck_names: list[str]) -> dict[str, dict[str, int]]:
+  stats: dict[str, dict[str, int]] = {
+      d: {"new": 0, "learn": 0, "due": 0} for d in deck_names
+  }
+
+  # Attempt 1: Native getDeckStats (fastest when Anki is on the Deck Browser screen)
+  raw = anki("getDeckStats", suppress_error=True, decks=deck_names)
+  if isinstance(raw, dict) and raw:
+    for _, info in raw.items():
+      if isinstance(info, dict) and "name" in info:
+        stats[info["name"]] = {
+            "new": int(info.get("new_count", 0)),
+            "learn": int(info.get("learn_count", 0)),
+            "due": int(info.get("review_count", 0)),
+        }
+    return stats
+
+  # Attempt 2: Resilient batch search query fallback via 'multi'
+  # Works reliably in all Anki states (even when the GUI is mid-review)
+  actions = []
+  for d in deck_names:
+    safe_name = d.replace('"', '\\"')
+    actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:new'}})
+    actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:learn'}})
+    actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:due -is:new -is:learn'}})
+
+  results = anki("multi", suppress_error=True, actions=actions)
+  if isinstance(results, list) and len(results) == len(deck_names) * 3:
+    for i, d in enumerate(deck_names):
+      new_cards = results[i * 3]
+      learn_cards = results[i * 3 + 1]
+      due_cards = results[i * 3 + 2]
+      stats[d] = {
+          "new": len(new_cards) if isinstance(new_cards, list) else 0,
+          "learn": len(learn_cards) if isinstance(learn_cards, list) else 0,
+          "due": len(due_cards) if isinstance(due_cards, list) else 0,
+      }
+
+  return stats
+
+
 def select_deck() -> Optional[str]:
   # 1. Allow passing deck name directly via CLI: python3 main.py "My Deck"
   if len(sys.argv) > 1:
     return " ".join(sys.argv[1:]).strip()
 
-  # 2. Query Anki for all available decks
-  decks = anki("deckNames")
-  if not decks:
-    return None
+  show_subdecks = True
 
-  decks = sorted(decks)
-  print(f"\n{BOLD}{C_MAGENTA}╔{'═' * 52}╗")
-  print(f"║ 📚 AVAILABLE DECKS{' ' * 33}║")
-  print(f"╚{'═' * 52}╝{RESET}")
-  for idx, name in enumerate(decks, start=1):
-    print(f"  {BOLD}{C_CYAN}[{idx:2d}]{RESET} {name}")
-  print(f"  {DIM}[ q] Quit{RESET}")
-  print(f"{C_MAGENTA}{'─' * 54}{RESET}")
+  # Navigate Anki back to the main deck browser so the scheduler unlocks tree stats
+  anki("guiDeckBrowser", suppress_error=True)
 
   while True:
-    choice = input(f"\n{BOLD}Select deck number:{RESET} ").strip().lower()
+    decks = anki("deckNames")
+    if not decks:
+      print(f"\n{C_RED}❌ No decks found or failed to query Anki.{RESET}")
+      return None
+
+    decks = sorted(decks)
+    stats = get_deck_stats(decks)
+
+    # Build hierarchical tree list
+    display_items: list[tuple[str, str, int]] = []
+    for name in decks:
+      parts = name.split("::")
+      depth = len(parts) - 1
+      short_name = parts[-1]
+
+      # If subdecks are hidden, skip non-root decks
+      if depth > 0 and not show_subdecks:
+        continue
+
+      display_items.append((name, short_name, depth))
+
+    # Header with column labels matching Anki Desktop (New, Learn, Due)
+    print(f"\n{BOLD}{C_MAGENTA}╔{'═' * 66}╗")
+    header_title = pad_display(" 📚 DECKS", 38)
+    header_counts = (
+        f"{BOLD}{C_BLUE}{'New':>7}{RESET}  "
+        f"{BOLD}{C_RED}{'Learn':>7}{RESET}  "
+        f"{BOLD}{C_GREEN}{'Due':>7}{RESET}"
+    )
+    print(f"║{header_title}{header_counts}  {C_MAGENTA}║")
+    print(f"╚{'═' * 66}╝{RESET}")
+
+    selectable_map: dict[int, str] = {}
+    current_idx = 1
+
+    for full_name, short_name, depth in display_items:
+      selectable_map[current_idx] = full_name
+      st = stats.get(full_name, {"new": 0, "learn": 0, "due": 0})
+
+      # Format tree indentation & branch connectors
+      if depth == 0:
+        has_children = any(d.startswith(full_name + "::") for d in decks)
+        icon = "📁 " if has_children else "📄 "
+        if not show_subdecks and has_children:
+          child_count = sum(1 for d in decks if d.startswith(full_name + "::"))
+          name_display = f"{icon}{short_name} {DIM}(+{child_count} subdecks){RESET}"
+        else:
+          name_display = f"{icon}{short_name}"
+        prefix = f" {BOLD}{C_CYAN}[{current_idx:2d}]{RESET} {name_display}"
+      else:
+        parent_prefix = full_name.rsplit("::", 1)[0]
+        siblings = [
+            d for d in decks
+            if d.startswith(parent_prefix + "::") and len(d.split("::")) - 1 == depth
+        ]
+        is_last = (full_name == siblings[-1]) if siblings else True
+        branch = "└─ " if is_last else "├─ "
+        indent = "    " * depth
+        prefix = f"{indent}{C_DIM}{branch}{RESET}{BOLD}{C_CYAN}[{current_idx:2d}]{RESET} {short_name}"
+
+      # Format counts: non-zero numbers are highlighted; zeroes are dimmed
+      new_val = st["new"]
+      learn_val = st["learn"]
+      due_val = st["due"]
+
+      new_str = f"{BOLD}{C_BLUE}{new_val:>7d}{RESET}" if new_val > 0 else f"{DIM}{'0':>7}{RESET}"
+      learn_str = f"{BOLD}{C_RED}{learn_val:>7d}{RESET}" if learn_val > 0 else f"{DIM}{'0':>7}{RESET}"
+      due_str = f"{BOLD}{C_GREEN}{due_val:>7d}{RESET}" if due_val > 0 else f"{DIM}{'0':>7}{RESET}"
+
+      left_col = pad_display(prefix, 38)
+      print(f"{left_col}{new_str}  {learn_str}  {due_str}")
+      current_idx += 1
+
+    sub_status = f"{C_GREEN}Shown{RESET}" if show_subdecks else f"{C_YELLOW}Hidden{RESET}"
+    print(f"{C_MAGENTA}{'─' * 66}{RESET}")
+    print(f" {BOLD}[s]{RESET} Toggle Subdecks ({sub_status})   {BOLD}[r]{RESET} Refresh   {BOLD}[q]{RESET} Quit")
+    print(f"{C_MAGENTA}{'─' * 66}{RESET}")
+
+    choice = input(f"\n{BOLD}Select deck number or action:{RESET} ").strip().lower()
     if choice in ["q", "quit", "exit"]:
       return None
+    if choice in ["s", "sub", "toggle"]:
+      show_subdecks = not show_subdecks
+      continue
+    if choice in ["r", "refresh"]:
+      continue
     if choice.isdigit():
       num = int(choice)
-      if 1 <= num <= len(decks):
-        return decks[num - 1]
-    print(f"{C_RED}Invalid choice. Enter 1-{len(decks)} or 'q'.{RESET}")
+      if num in selectable_map:
+        return selectable_map[num]
+    print(f"{C_RED}Invalid input. Enter 1-{len(selectable_map)}, 's', 'r', or 'q'.{RESET}")
 
 
 def review_deck(deck_name: str) -> None:
