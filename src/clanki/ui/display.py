@@ -1,6 +1,42 @@
+import atexit
 import re
+import sys
+from typing import Any
 import unicodedata
-from clanki.ui.theme import BOLD, C_CYAN, C_GREEN, DIM, RESET
+from clanki.ui.theme import (
+    ALT_SCREEN_ENTER,
+    ALT_SCREEN_EXIT,
+    BOLD,
+    CLEAR_FROM_HOME,
+    CURSOR_HIDE,
+    CURSOR_HOME,
+    CURSOR_SHOW,
+    C_CYAN,
+    C_GREEN,
+    DIM,
+    RESET,
+)
+
+def clear_screen() -> None:
+    """Home cursor to row 1, col 1 and clear screen below while suppressing flicker."""
+    sys.stdout.write(f"{CURSOR_HIDE}{CURSOR_HOME}{CLEAR_FROM_HOME}")
+    sys.stdout.flush()
+
+class TerminalScreen:
+    """Context manager to run the UI inside the alternate screen buffer with guaranteed restoration."""
+
+    def __enter__(self) -> "TerminalScreen":
+        sys.stdout.write(f"{ALT_SCREEN_ENTER}{CURSOR_HOME}{CLEAR_FROM_HOME}")
+        sys.stdout.flush()
+        atexit.register(self._cleanup)
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        sys.stdout.write(f"{CURSOR_SHOW}{ALT_SCREEN_EXIT}")
+        sys.stdout.flush()
 
 def render_progress(percent: int, message: str, bar_width: int = 24) -> str:
     """Format an apt-style progress bar string with percentage and status message."""

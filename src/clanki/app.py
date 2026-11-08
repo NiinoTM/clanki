@@ -3,6 +3,7 @@ from clanki.client.anki_connect import AnkiConnectClient
 from clanki.client.process import AnkiProcessManager
 from clanki.core.tree import build_deck_tree, filter_valid_decks
 from clanki.ui.deck_menu import DeckMenuUI
+from clanki.ui.display import TerminalScreen
 from clanki.ui.reviewer import ReviewerUI
 from clanki.ui.theme import C_RED, C_YELLOW, RESET
 
@@ -20,18 +21,20 @@ class AppSession:
             return
 
         try:
-            if initial_deck:
-                self.review_deck(initial_deck)
-                return
+            with TerminalScreen():
+                if initial_deck:
+                    self.review_deck(initial_deck)
+                    return
 
-            while True:
-                deck = self.select_deck()
-                if not deck:
-                    print(f"\n{C_YELLOW}Exited clanki. Happy studying!{RESET}")
-                    break
-                self.review_deck(deck)
+                while True:
+                    deck = self.select_deck()
+                    if not deck:
+                        break
+                    self.review_deck(deck)
         finally:
             self.proc_mgr.shutdown()
+
+        print(f"\n{C_YELLOW}Exited clanki. Happy studying!{RESET}")
 
     def select_deck(self) -> Optional[str]:
         while True:
@@ -56,25 +59,21 @@ class AppSession:
             self.reviewer_ui.show_review_launch_error(deck_name)
             return
 
-        self.reviewer_ui.show_active_deck_banner(deck_name)
         cards_reviewed = 0
-
         while True:
             card = self.client.get_current_card()
             if not card:
                 self.reviewer_ui.show_session_summary(deck_name, cards_reviewed)
                 break
 
-            clean_q, quit_requested = self.reviewer_ui.show_question(card.question)
+            clean_q, quit_requested = self.reviewer_ui.show_question(deck_name, card.question)
             if quit_requested:
-                self.reviewer_ui.show_returning()
                 break
 
             self.client.show_answer()
-            ease = self.reviewer_ui.show_answer(card.answer, clean_q)
+            ease = self.reviewer_ui.show_answer(deck_name, clean_q, card.answer)
             if ease is not None:
                 self.client.answer_card(ease)
                 cards_reviewed += 1
             else:
-                self.reviewer_ui.show_returning()
                 break

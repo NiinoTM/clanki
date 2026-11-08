@@ -1,9 +1,10 @@
 import re
+import sys
 from typing import Dict, List, Optional, Tuple
 from clanki.core.models import DeckNode
-from clanki.ui.display import pad_display
+from clanki.ui.display import clear_screen, pad_display
 from clanki.ui.theme import (
-    BOLD, C_BLUE, C_CYAN, C_DIM, C_GREEN, C_MAGENTA, C_RED, C_YELLOW, DIM, RESET
+    BOLD, C_BLUE, C_CYAN, C_DIM, C_GREEN, C_MAGENTA, C_RED, C_YELLOW, CURSOR_SHOW, DIM, RESET
 )
 
 class DeckMenuUI:
@@ -11,7 +12,8 @@ class DeckMenuUI:
         self.show_subdecks = False
 
     def render_and_select(self, nodes: List[DeckNode], valid_decks: List[str]) -> Tuple[Optional[str], str]:
-        print(f"\n{BOLD}{C_MAGENTA}╔{'═' * 66}╗")
+        clear_screen()
+        print(f"{BOLD}{C_MAGENTA}╔{'═' * 66}╗")
         header_title = pad_display(" 📚 DECKS", 39)
         header_counts = (
             f"{BOLD}{C_BLUE}{'New':>7}{RESET}  "
@@ -59,6 +61,8 @@ class DeckMenuUI:
         print(f" {BOLD}[s]{RESET} Toggle Subdecks ({sub_status})   {BOLD}[r]{RESET} Refresh   {BOLD}[q]{RESET} Quit")
         print(f"{C_MAGENTA}{'─' * 66}{RESET}")
 
+        sys.stdout.write(CURSOR_SHOW)
+        sys.stdout.flush()
         raw_choice = input(f"\n{BOLD}Select deck number or action:{RESET} ").strip().lower()
         choice = re.sub(r"\033\[[0-9;]*[a-zA-Z~]", "", raw_choice).strip()
 

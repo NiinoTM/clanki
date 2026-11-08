@@ -1,5 +1,6 @@
 import html
 import re
+from clanki.ui.latex import render_latex
 from clanki.ui.theme import (
     BOLD, C_CYAN, C_GREEN, C_YELLOW, ITALIC, OFF_BOLD, OFF_ITALIC, OFF_UNDERLINE, RESET, UNDERLINE
 )
@@ -37,7 +38,10 @@ def clean_html(raw_html: str) -> str:
     # 5. Decode HTML entities (&lt;, &gt;, &amp;, &quot;, &#39;, etc.)
     clean = html.unescape(clean)
 
-    # 6. Normalize spacing while preserving paragraph gaps
+    # 6. Transliterate LaTeX/MathJax into Unicode terminal characters
+    clean = render_latex(clean)
+
+    # 7. Normalize spacing while preserving paragraph gaps
     clean = re.sub(r"\n\s*\n\s*\n+", "\n\n", clean)
     return clean.strip() + RESET
 

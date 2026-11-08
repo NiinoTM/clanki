@@ -77,7 +77,7 @@ class AnkiProcessManager:
             if self.client.is_alive():
                 elapsed = time.time() - start_time
                 sys.stdout.write(
-                    render_progress(100, f"Headless session ready (initialized in {elapsed:.1f}s).\n")
+                    render_progress(100, f"Headless session ready (initialized in {elapsed:.1f}s).") + "\n"
                 )
                 sys.stdout.flush()
                 return True
