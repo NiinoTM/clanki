@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clanki"
+version = "0.2.0"
+description = "Minimalist Terminal Reviewer for Anki"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28.0",
+]
+
+[project.scripts]
+ank = "clanki.cli:main"
+clanki = "clanki.cli:main"
