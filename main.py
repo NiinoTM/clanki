@@ -164,25 +164,13 @@ def get_deck_stats(deck_names: list[str]) -> dict[str, dict[str, int]]:
 
 
 def select_deck() -> Optional[str]:
-  # 1. Allow passing deck name directly or displaying help
-  if len(sys.argv) > 1:
-    arg = " ".join(sys.argv[1:]).strip()
-    if arg in ["-h", "--help", "help"]:
-      print(f"\n{BOLD}{C_CYAN}clanki{RESET} - Minimalist Terminal Reviewer for Anki\n")
-      print(f"{BOLD}Usage:{RESET}")
-      print(f"  ank                 Interactive deck selection and study session")
-      print(f"  ank <deck_name>     Directly launch review for <deck_name>")
-      print(f"  ank -h, --help      Display this help menu\n")
-      return None
-    return arg
-
   # Subdecks hidden by default per user preference
   show_subdecks = False
 
-  # Navigate Anki back to the main deck browser so the scheduler unlocks tree stats
-  anki("guiDeckBrowser", suppress_error=True)
-
   while True:
+    # Navigate Anki back to the main deck browser so the scheduler unlocks tree stats
+    anki("guiDeckBrowser", suppress_error=True)
+
     decks = anki("deckNames")
     if not decks:
       print(f"\n{C_RED}❌ No decks found or failed to query Anki.{RESET}")
@@ -272,7 +260,12 @@ def select_deck() -> Optional[str]:
     print(f" {BOLD}[s]{RESET} Toggle Subdecks ({sub_status})   {BOLD}[r]{RESET} Refresh   {BOLD}[q]{RESET} Quit")
     print(f"{C_MAGENTA}{'─' * 66}{RESET}")
 
-    choice = input(f"\n{BOLD}Select deck number or action:{RESET} ").strip().lower()
+    raw_choice = input(f"\n{BOLD}Select deck number or action:{RESET} ").strip().lower()
+    # Strip any terminal escape codes or keypad artifacts
+    choice = re.sub(r"\033\[[0-9;]*[a-zA-Z~]", "", raw_choice).strip()
+
+    if not choice:
+      continue
     if choice in ["q", "quit", "exit"]:
       return None
     if choice in ["s", "sub", "toggle"]:
@@ -280,10 +273,14 @@ def select_deck() -> Optional[str]:
       continue
     if choice in ["r", "refresh"]:
       continue
-    if choice.isdigit():
-      num = int(choice)
+
+    # Extract digits cleanly (handles numpad input and stray keystrokes)
+    digits = re.findall(r"\d+", choice)
+    if digits:
+      num = int(digits[0])
       if num in selectable_map:
         return selectable_map[num]
+
     print(f"{C_RED}Invalid input. Enter 1-{len(selectable_map)}, 's', 'r', or 'q'.{RESET}")
 
 
@@ -292,18 +289,25 @@ def review_deck(deck_name: str) -> None:
   result = anki("guiDeckReview", name=deck_name)
   if result is False:
     print(f"\n{C_RED}⚠️  Could not launch review session for '{deck_name}'.{RESET}")
+    input(f"\n{DIM}[Press ENTER to return to decks]{RESET}")
     return
 
   print(f"\n{BOLD}{C_MAGENTA}📖 ACTIVE DECK:{RESET} {BOLD}{deck_name}{RESET}")
 
+  cards_reviewed = 0
   while True:
-    card = anki("guiCurrentCard")
+    # Suppress error because 'Gui review is not currently active' is Anki's normal signal that 0 cards are due
+    card = anki("guiCurrentCard", suppress_error=True)
     if not card:
-      print(f"\n{BOLD}{C_GREEN}🎉 All due cards finished in '{deck_name}'!{RESET}")
+      if cards_reviewed == 0:
+        print(f"\n{BOLD}{C_GREEN}🎉 No cards currently due in '{deck_name}'!{RESET}")
+      else:
+        print(f"\n{BOLD}{C_GREEN}🎉 All due cards finished in '{deck_name}'! ({cards_reviewed} reviewed){RESET}")
+      input(f"\n{DIM}[Press ENTER to return to decks]{RESET}")
       break
 
-    # Question Banner (Cyan)
     clean_q = clean_html(card["question"])
+
     # Eliminate question repetition: Anki's default template embeds {{FrontSide}} in card["answer"]
     raw_answer = card["answer"]
     split_parts = re.split(
@@ -315,16 +319,17 @@ def review_deck(deck_name: str) -> None:
       clean_a = clean_html(raw_answer)
       if clean_a.startswith(clean_q):
         clean_a = clean_a[len(clean_q):].lstrip()
+
     # Question Header (Filled Badge + Clean Solid Rule)
     print(f"\n{BG_CYAN}{C_BLACK}{BOLD} ❓ QUESTION {RESET}")
     print(f"{C_CYAN}{'─' * 62}{RESET}")
     print(clean_q)
     print(f"{C_CYAN}{'─' * 62}{RESET}")
 
-    prompt = f"\n{DIM}[Press ENTER to reveal answer, or 'q' to quit]{RESET}: "
+    prompt = f"\n{DIM}[Press ENTER to reveal answer, or 'q' to return to decks]{RESET}: "
     user_input = input(prompt).strip().lower()
     if user_input in ["q", "quit", "exit"]:
-      print(f"\n{C_YELLOW}Review session closed.{RESET}")
+      print(f"\n{C_YELLOW}Returning to deck menu...{RESET}")
       break
 
     # Flip the card in Anki's state machine before grading
@@ -342,21 +347,39 @@ def review_deck(deck_name: str) -> None:
         f"{C_YELLOW}[2] Hard{RESET}  "
         f"{C_GREEN}[3] Good{RESET}  "
         f"{C_CYAN}[4] Easy{RESET}  "
-        f"{DIM}[q: Quit]{RESET}: "
+        f"{DIM}[q: Return to decks]{RESET}: "
     )
     ease = input(rating_prompt).strip().lower()
     if ease in ["1", "2", "3", "4"]:
       anki("guiAnswerCard", ease=int(ease))
+      cards_reviewed += 1
     elif ease in ["q", "quit", "exit"]:
-      print(f"\n{C_YELLOW}Review session closed.{RESET}")
+      print(f"\n{C_YELLOW}Returning to deck menu...{RESET}")
       break
     else:
       print(f"{C_DIM}Invalid input, skipping grading...{RESET}")
 
 
 def main():
-  deck = select_deck()
-  if deck:
+  # CLI argument mode: if deck or flag passed directly, run once and exit
+  if len(sys.argv) > 1:
+    arg = " ".join(sys.argv[1:]).strip()
+    if arg in ["-h", "--help", "help"]:
+      print(f"\n{BOLD}{C_CYAN}clanki{RESET} - Minimalist Terminal Reviewer for Anki\n")
+      print(f"{BOLD}Usage:{RESET}")
+      print(f"  ank                 Interactive deck selection and study session")
+      print(f"  ank <deck_name>     Directly launch review for <deck_name>")
+      print(f"  ank -h, --help      Display this help menu\n")
+      return
+    review_deck(arg)
+    return
+
+  # Interactive mode: stay inside the application until user explicitly quits with 'q'
+  while True:
+    deck = select_deck()
+    if not deck:
+      print(f"\n{C_YELLOW}Exited clanki. Happy studying!{RESET}")
+      break
     review_deck(deck)
 
 
