@@ -164,7 +164,8 @@ def select_deck() -> Optional[str]:
   if len(sys.argv) > 1:
     return " ".join(sys.argv[1:]).strip()
 
-  show_subdecks = True
+  # Subdecks hidden by default per user preference
+  show_subdecks = False
 
   # Navigate Anki back to the main deck browser so the scheduler unlocks tree stats
   anki("guiDeckBrowser", suppress_error=True)
@@ -193,13 +194,13 @@ def select_deck() -> Optional[str]:
 
     # Header with column labels matching Anki Desktop (New, Learn, Due)
     print(f"\n{BOLD}{C_MAGENTA}╔{'═' * 66}╗")
-    header_title = pad_display(" 📚 DECKS", 38)
+    header_title = pad_display(" 📚 DECKS", 39)
     header_counts = (
         f"{BOLD}{C_BLUE}{'New':>7}{RESET}  "
         f"{BOLD}{C_RED}{'Learn':>7}{RESET}  "
         f"{BOLD}{C_GREEN}{'Due':>7}{RESET}"
     )
-    print(f"║{header_title}{header_counts}  {C_MAGENTA}║")
+    print(f"║ {header_title}{header_counts} {C_MAGENTA}║")
     print(f"╚{'═' * 66}╝{RESET}")
 
     selectable_map: dict[int, str] = {}
@@ -209,15 +210,15 @@ def select_deck() -> Optional[str]:
       selectable_map[current_idx] = full_name
       st = stats.get(full_name, {"new": 0, "learn": 0, "due": 0})
 
-      # Format tree indentation & branch connectors
+      # Format tree indentation & branch connectors with bold deck names
       if depth == 0:
         has_children = any(d.startswith(full_name + "::") for d in decks)
         icon = "📁 " if has_children else "📄 "
         if not show_subdecks and has_children:
           child_count = sum(1 for d in decks if d.startswith(full_name + "::"))
-          name_display = f"{icon}{short_name} {DIM}(+{child_count} subdecks){RESET}"
+          name_display = f"{icon}{BOLD}{short_name}{RESET} {DIM}(+{child_count} subdecks){RESET}"
         else:
-          name_display = f"{icon}{short_name}"
+          name_display = f"{icon}{BOLD}{short_name}{RESET}"
         prefix = f" {BOLD}{C_CYAN}[{current_idx:2d}]{RESET} {name_display}"
       else:
         parent_prefix = full_name.rsplit("::", 1)[0]
@@ -228,7 +229,7 @@ def select_deck() -> Optional[str]:
         is_last = (full_name == siblings[-1]) if siblings else True
         branch = "└─ " if is_last else "├─ "
         indent = "    " * depth
-        prefix = f"{indent}{C_DIM}{branch}{RESET}{BOLD}{C_CYAN}[{current_idx:2d}]{RESET} {short_name}"
+        prefix = f"{indent}{C_DIM}{branch}{RESET}{BOLD}{C_CYAN}[{current_idx:2d}]{RESET} {BOLD}{short_name}{RESET}"
 
       # Format counts: non-zero numbers are highlighted; zeroes are dimmed
       new_val = st["new"]
