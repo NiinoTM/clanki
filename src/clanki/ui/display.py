@@ -1,5 +1,14 @@
 import re
 import unicodedata
+from clanki.ui.theme import BOLD, C_CYAN, C_GREEN, DIM, RESET
+
+def render_progress(percent: int, message: str, bar_width: int = 24) -> str:
+    """Format an apt-style progress bar string with percentage and status message."""
+    clamped = max(0, min(100, percent))
+    filled = int(bar_width * (clamped / 100))
+    empty = bar_width - filled
+    bar = f"{C_GREEN}{'#' * filled}{RESET}{DIM}{'.' * empty}{RESET}"
+    return f"\r{BOLD}Progress:{RESET} [{BOLD}{C_CYAN}{clamped:>3d}%{RESET}] [{bar}] {message}\033[K"
 
 def str_display_width(s: str) -> int:
     """Compute visual terminal cell width (ignoring ANSI codes & handling CJK characters)."""
