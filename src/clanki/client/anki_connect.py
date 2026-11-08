@@ -105,3 +105,37 @@ class AnkiConnectClient:
 
     def answer_card(self, ease: Ease) -> None:
         self.request("guiAnswerCard", ease=int(ease))
+
+    def get_note_fields_for_card(self, card_id: int) -> Optional[tuple[int, Dict[str, str]]]:
+        """Fetch the note ID and raw field dictionary for a given card."""
+        info = self.request("cardsInfo", suppress_error=True, cards=[card_id])
+        if isinstance(info, list) and info and isinstance(info[0], dict):
+            card_data = info[0]
+            note_id = int(card_data.get("note", 0))
+            raw_fields = card_data.get("fields", {})
+            fields = {
+                name: field_obj.get("value", "")
+                for name, field_obj in raw_fields.items()
+                if isinstance(field_obj, dict)
+            }
+            return note_id, fields
+        return None
+
+    def update_note_fields(self, note_id: int, fields: Dict[str, str]) -> bool:
+        """Update fields on the underlying note via AnkiConnect."""
+        payload = {
+            "action": "updateNoteFields",
+            "version": 6,
+            "params": {"note": {"id": note_id, "fields": fields}},
+        }
+        try:
+            resp = requests.post(self.url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("error"):
+                print(f"\n⚠️  AnkiConnect error on 'updateNoteFields': {data['error']}", file=sys.stderr)
+                return False
+            return True
+        except Exception as err:
+            print(f"\n❌ Network error updating note fields: {err}", file=sys.stderr)
+            return False

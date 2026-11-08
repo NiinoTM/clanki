@@ -28,6 +28,7 @@ MATH_SYMBOLS = {
     r"\rightarrow": "→", r"\to": "→", r"\leftarrow": "←",
     r"\Rightarrow": "⇒", r"\Leftarrow": "⇐", r"\leftrightarrow": "↔",
     r"\in": "∈", r"\notin": "∉", r"\forall": "∀", r"\exists": "∃",
+    r"\dots": "...", r"\ldots": "...", r"\cdots": "···", r"\vdots": "⋮", r"\ddots": "⋱",
 }
 
 # Subscript & Superscript mapping tables
@@ -72,12 +73,12 @@ def render_latex(text: str) -> str:
     # 2. Square roots: \sqrt{x} -> √(x)
     out = re.sub(r"\\sqrt\s*\{([^{}]+)\}", r"√(\1)", out)
 
-    # 3. Text & font wrappers: \text{...}, \mathrm{...}, \mathbf{...} -> ...
-    out = re.sub(r"\\(?:text|mathrm|mathbf|mathit|textbf|textbf|bm)\s*\{([^{}]+)\}", r"\1", out)
+    # 3. Text, font & underline wrappers: \text{...}, \mathrm{...}, \underline{...} -> ...
+    out = re.sub(r"\\(?:text|mathrm|mathbf|mathit|textbf|bm|underline)\s*\{([^{}]+)\}", r"\1", out)
 
     # 4. Vectors: \vec{x} -> x⃗
-    out = re.sub(r"\\vec\s*\{([a-zA-Z])\}", r"\1\u20D7", out)
-    out = re.sub(r"\\vec\s*([a-zA-Z])", r"\1\u20D7", out)
+    out = re.sub(r"\\vec\s*\{([a-zA-Z])\}", lambda m: f"{m.group(1)}\u20D7", out)
+    out = re.sub(r"\\vec\s*([a-zA-Z])", lambda m: f"{m.group(1)}\u20D7", out)
 
     # 5. Greek characters & operators
     for macro, unicode_char in GREEK_SYMBOLS.items():

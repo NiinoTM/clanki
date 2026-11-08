@@ -2,7 +2,7 @@ import html
 import re
 from clanki.ui.latex import render_latex
 from clanki.ui.theme import (
-    BOLD, C_CYAN, C_GREEN, C_YELLOW, ITALIC, OFF_BOLD, OFF_ITALIC, OFF_UNDERLINE, RESET, UNDERLINE
+    BOLD, C_CYAN, C_GREEN, C_YELLOW, ITALIC, OFF_BOLD, OFF_ITALIC, RESET
 )
 
 def clean_html(raw_html: str) -> str:
@@ -23,8 +23,8 @@ def clean_html(raw_html: str) -> str:
     clean = re.sub(r"<(i|em)[^>]*>", f"{ITALIC}{C_CYAN}", clean, flags=re.IGNORECASE)
     clean = re.sub(r"</(i|em)>", OFF_ITALIC, clean, flags=re.IGNORECASE)
 
-    clean = re.sub(r"<(u|ins)[^>]*>", UNDERLINE, clean, flags=re.IGNORECASE)
-    clean = re.sub(r"</(u|ins)>", OFF_UNDERLINE, clean, flags=re.IGNORECASE)
+    # Strip <u> / <ins> tags to prevent harsh terminal underline bars across cards and math
+    clean = re.sub(r"</?(u|ins)[^>]*>", "", clean, flags=re.IGNORECASE)
 
     clean = re.sub(r"<code[^>]*>", f"{BOLD}{C_GREEN}", clean, flags=re.IGNORECASE)
     clean = re.sub(r"</code>", OFF_BOLD, clean, flags=re.IGNORECASE)
