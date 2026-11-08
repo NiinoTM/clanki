@@ -120,7 +120,7 @@ def pad_display(s: str, target_width: int) -> str:
 
 def get_deck_stats(deck_names: list[str]) -> dict[str, dict[str, int]]:
   stats: dict[str, dict[str, int]] = {
-      d: {"new": 0, "learn": 0, "due": 0} for d in deck_names
+      d: {"new": 0, "learn": 0, "due": 0, "total": 0} for d in deck_names
   }
 
   # Attempt 1: Native getDeckStats (fastest when Anki is on the Deck Browser screen)
@@ -132,37 +132,49 @@ def get_deck_stats(deck_names: list[str]) -> dict[str, dict[str, int]]:
             "new": int(info.get("new_count", 0)),
             "learn": int(info.get("learn_count", 0)),
             "due": int(info.get("review_count", 0)),
+            "total": int(info.get("total_in_deck", 0)),
         }
     return stats
 
   # Attempt 2: Resilient batch search query fallback via 'multi'
-  # Works reliably in all Anki states (even when the GUI is mid-review)
+  # Collects new, learn, due, and total card counts to detect empty ghost decks
   actions = []
   for d in deck_names:
     safe_name = d.replace('"', '\\"')
     actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:new'}})
     actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:learn'}})
     actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}" is:due -is:new -is:learn'}})
+    actions.append({"action": "findCards", "params": {"query": f'deck:"{safe_name}"'}})
 
   results = anki("multi", suppress_error=True, actions=actions)
-  if isinstance(results, list) and len(results) == len(deck_names) * 3:
+  if isinstance(results, list) and len(results) == len(deck_names) * 4:
     for i, d in enumerate(deck_names):
-      new_cards = results[i * 3]
-      learn_cards = results[i * 3 + 1]
-      due_cards = results[i * 3 + 2]
+      new_cards = results[i * 4]
+      learn_cards = results[i * 4 + 1]
+      due_cards = results[i * 4 + 2]
+      total_cards = results[i * 4 + 3]
       stats[d] = {
           "new": len(new_cards) if isinstance(new_cards, list) else 0,
           "learn": len(learn_cards) if isinstance(learn_cards, list) else 0,
           "due": len(due_cards) if isinstance(due_cards, list) else 0,
+          "total": len(total_cards) if isinstance(total_cards, list) else 0,
       }
 
   return stats
 
 
 def select_deck() -> Optional[str]:
-  # 1. Allow passing deck name directly via CLI: python3 main.py "My Deck"
+  # 1. Allow passing deck name directly or displaying help
   if len(sys.argv) > 1:
-    return " ".join(sys.argv[1:]).strip()
+    arg = " ".join(sys.argv[1:]).strip()
+    if arg in ["-h", "--help", "help"]:
+      print(f"\n{BOLD}{C_CYAN}clanki{RESET} - Minimalist Terminal Reviewer for Anki\n")
+      print(f"{BOLD}Usage:{RESET}")
+      print(f"  ank                 Interactive deck selection and study session")
+      print(f"  ank <deck_name>     Directly launch review for <deck_name>")
+      print(f"  ank -h, --help      Display this help menu\n")
+      return None
+    return arg
 
   # Subdecks hidden by default per user preference
   show_subdecks = False
@@ -176,12 +188,23 @@ def select_deck() -> Optional[str]:
       print(f"\n{C_RED}❌ No decks found or failed to query Anki.{RESET}")
       return None
 
-    decks = sorted(decks)
     stats = get_deck_stats(decks)
+
+    # Filter out empty orphan/ghost decks (0 total cards and no children with cards)
+    has_any_total = any(st.get("total", 0) > 0 for st in stats.values())
+    if has_any_total:
+      valid_decks = [
+          d for d in decks
+          if stats.get(d, {}).get("total", 0) > 0
+          or any(child.startswith(d + "::") and stats.get(child, {}).get("total", 0) > 0 for child in decks)
+      ]
+    else:
+      valid_decks = decks
+    valid_decks = sorted(valid_decks)
 
     # Build hierarchical tree list
     display_items: list[tuple[str, str, int]] = []
-    for name in decks:
+    for name in valid_decks:
       parts = name.split("::")
       depth = len(parts) - 1
       short_name = parts[-1]
@@ -212,10 +235,10 @@ def select_deck() -> Optional[str]:
 
       # Format tree indentation & branch connectors with bold deck names
       if depth == 0:
-        has_children = any(d.startswith(full_name + "::") for d in decks)
+        has_children = any(d.startswith(full_name + "::") for d in valid_decks)
         icon = "📁 " if has_children else "📄 "
         if not show_subdecks and has_children:
-          child_count = sum(1 for d in decks if d.startswith(full_name + "::"))
+          child_count = sum(1 for d in valid_decks if d.startswith(full_name + "::"))
           name_display = f"{icon}{BOLD}{short_name}{RESET} {DIM}(+{child_count} subdecks){RESET}"
         else:
           name_display = f"{icon}{BOLD}{short_name}{RESET}"
@@ -223,7 +246,7 @@ def select_deck() -> Optional[str]:
       else:
         parent_prefix = full_name.rsplit("::", 1)[0]
         siblings = [
-            d for d in decks
+            d for d in valid_decks
             if d.startswith(parent_prefix + "::") and len(d.split("::")) - 1 == depth
         ]
         is_last = (full_name == siblings[-1]) if siblings else True
